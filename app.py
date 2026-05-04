@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import tempfile
+import time  # <-- Added for unique audio filenames
 from dotenv import load_dotenv
 
 from agent.finance_agent import build_agent, run_agent
@@ -171,7 +172,11 @@ def process_query(user_text: str):
     st.session_state.memory.add_turn(user_text, response)
 
     st.session_state.status = "Generating voice response..."
-    audio_path = os.path.join(tempfile.gettempdir(), "jio_response.mp3")
+    
+    # <-- FIX 2: Unique audio filename so history doesn't get overwritten
+    unique_filename = f"response_{int(time.time())}.mp3"
+    audio_path = os.path.join(tempfile.gettempdir(), unique_filename)
+    
     tts_result = text_to_speech(response, audio_path)
 
     st.session_state.chat_log.append({
@@ -196,32 +201,31 @@ with tab1:
         raw_bytes = audio_input.getvalue()
         audio_hash = hash(raw_bytes)
         
-        # Skip if we already processed this exact recording
-        if audio_hash == st.session_state.last_audio_hash:
-            st.stop()
-        st.session_state.last_audio_hash = audio_hash
-        st.caption(f"Audio captured: {len(raw_bytes):,} bytes")
+        # <-- FIX 1: Wrap in an if-statement instead of using st.stop()
+        if audio_hash != st.session_state.last_audio_hash:
+            st.session_state.last_audio_hash = audio_hash
+            st.caption(f"Audio captured: {len(raw_bytes):,} bytes")
 
-        # Write raw bytes and let Whisper load directly via ffmpeg
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
-            tmp.write(raw_bytes)
-            raw_path = tmp.name
+            # Write raw bytes and let Whisper load directly via ffmpeg
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
+                tmp.write(raw_bytes)
+                raw_path = tmp.name
 
-        with st.spinner("Transcribing your voice..."):
-            transcribed = transcribe_audio(raw_path)
+            with st.spinner("Transcribing your voice..."):
+                transcribed = transcribe_audio(raw_path)
 
-        try:
-            os.unlink(raw_path)
-        except:
-            pass
+            try:
+                os.unlink(raw_path)
+            except:
+                pass
 
-        if transcribed:
-            st.success(f'Heard: *"{transcribed}"*')
-            with st.spinner("Getting response..."):
-                process_query(transcribed)
-            st.rerun()
-        else:
-            st.error("Could not transcribe audio. Please try again.")
+            if transcribed:
+                st.success(f'Heard: *"{transcribed}"*')
+                with st.spinner("Getting response..."):
+                    process_query(transcribed)
+                st.rerun()
+            else:
+                st.error("Could not transcribe audio. Please try again.")
 
 
 with tab2:
@@ -253,7 +257,7 @@ if st.session_state.chat_log:
             st.markdown('<div class="label-user">YOU</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="chat-bubble-user">{entry["text"]}</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="label-agent">JIO FINANCE AI</div>', unsafe_allow_html=True)
+            st.markdown('<div class="label-agent">FINANCE AI</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="chat-bubble-agent">{entry["text"]}</div>', unsafe_allow_html=True)
 
             if entry.get("audio") and os.path.exists(entry["audio"]):
