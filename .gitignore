@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+test_*.py
+list_voices.py
+test_output.mp3
+response.mp3
+*.wav
+*.webm
+.streamlit/
