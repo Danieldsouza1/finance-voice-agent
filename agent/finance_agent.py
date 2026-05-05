@@ -13,7 +13,7 @@ from tools.stock_news import get_stock_news
 
 load_dotenv()
 
-SYSTEM_PROMPT = """You are an AI-powered voice-based financial assistant, designed to provide data-backed investment insights to Indian retail investors.
+SYSTEM_PROMPT = r"""You are an AI-powered voice-based financial assistant, designed to provide data-backed investment insights to Indian retail investors.
 
 Your primary goal is to help users explore stock options using real financial data. You are NOT a licensed financial advisor.
 
@@ -55,34 +55,39 @@ Reliance is showing strong growth with a P E ratio of 28.5. The current price is
 
 
 def build_agent():
-    # 1. PRIMARY: Gemini 2.5 Flash Lite (Fastest, but 20/day limit)
+    # Load keys explicitly from environment
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY")
+
+    # 1. PRIMARY: Gemini 2.5 Flash Lite
     primary_llm = ChatOpenAI(
         model_name="gemini-2.5-flash-lite",
-        api_key=os.getenv("GEMINI_API_KEY"),
+        api_key=gemini_key, # <--- Ensure this is explicitly passed
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         temperature=0.3,
-        max_retries=0,  # <-- Fails instantly if 20/day limit is hit
+        max_retries=0,
         timeout=20,
     )
 
-    # 2. FALLBACK 1: Gemini 1.5 Flash (Huge 1,500/day limit)
+    # 2. FALLBACK 1: Gemini 1.5 Flash
     fallback_1 = ChatOpenAI(
         model_name="gemini-1.5-flash",
-        api_key=os.getenv("GEMINI_API_KEY"),
+        api_key=gemini_key, # <--- Ensure this is explicitly passed
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         temperature=0.3,
-        max_retries=0,  # <-- Fails instantly if Google's API is down entirely
+        max_retries=0,
         timeout=20,
     )
 
-    # 3. FALLBACK 2: Groq LLaMA 3.3 (Cross-provider backup)
+    # 3. FALLBACK 2: Groq LLaMA 3.3
     fallback_2 = ChatGroq(
         model="llama-3.3-70b-versatile",
-        api_key=os.getenv("GROQ_API_KEY"),
+        api_key=groq_key, # <--- Ensure this is explicitly passed
         temperature=0.3,
-        max_retries=1,  # <-- Last resort, allow it to retry once
+        max_retries=1,
         timeout=20,
     )
+
 
     # Combine them using LangChain's native fallback feature
     robust_llm = primary_llm.with_fallbacks([fallback_1, fallback_2])
