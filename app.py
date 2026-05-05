@@ -1,7 +1,9 @@
 import streamlit as st
 import os
 import tempfile
-import time  # <-- Added for unique audio filenames
+import time
+import json
+import re
 from dotenv import load_dotenv
 
 from agent.finance_agent import build_agent, run_agent
@@ -25,168 +27,123 @@ st.markdown("""
     .main { background-color: #0a0a0a; }
     .stApp { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%); }
 
-    .header-container {
-        text-align: center;
-        padding: 2rem 0 1rem 0;
-    }
+    .header-container { text-align: center; padding: 2rem 0 1rem 0; }
     .header-title {
-        font-size: 2.4rem;
-        font-weight: 700;
+        font-size: 2.4rem; font-weight: 700;
         background: linear-gradient(90deg, #00d4ff, #0066ff);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         margin-bottom: 0.2rem;
     }
-    .header-subtitle {
-        color: #888;
-        font-size: 0.95rem;
-        letter-spacing: 0.05em;
-    }
+    .header-subtitle { color: #888; font-size: 0.95rem; letter-spacing: 0.05em; }
 
     .chat-bubble-user {
-        background: linear-gradient(135deg, #1e3a5f, #0d2137);
-        border: 1px solid #1e4d7b;
-        border-radius: 16px 16px 4px 16px;
-        padding: 12px 16px;
-        margin: 8px 0;
-        color: #e0f0ff;
-        font-size: 0.95rem;
+        background: linear-gradient(135deg, #1e3a5f, #0d2137); border: 1px solid #1e4d7b;
+        border-radius: 16px 16px 4px 16px; padding: 12px 16px; margin: 8px 0; color: #e0f0ff;
     }
     .chat-bubble-agent {
-        background: linear-gradient(135deg, #1a1a2e, #16213e);
-        border: 1px solid #2a2a4a;
-        border-radius: 16px 16px 16px 4px;
-        padding: 12px 16px;
-        margin: 8px 0;
-        color: #c8d8e8;
-        font-size: 0.95rem;
-        line-height: 1.6;
+        background: linear-gradient(135deg, #1a1a2e, #16213e); border: 1px solid #2a2a4a;
+        border-radius: 16px 16px 16px 4px; padding: 12px 16px; margin: 8px 0; color: #c8d8e8;
     }
-    .label-user {
-        font-size: 0.75rem;
-        color: #4a9eff;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        margin-bottom: 4px;
-    }
-    .label-agent {
-        font-size: 0.75rem;
-        color: #888;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        margin-bottom: 4px;
-    }
+    .label-user, .label-agent { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; margin-bottom: 4px; }
+    .label-user { color: #4a9eff; }
+    .label-agent { color: #888; }
 
     .status-box {
-        background: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 10px;
-        padding: 10px 16px;
-        color: #6b7280;
-        font-size: 0.85rem;
-        text-align: center;
-        margin: 8px 0;
+        background: #111827; border: 1px solid #1f2937; border-radius: 10px;
+        padding: 10px 16px; color: #6b7280; font-size: 0.85rem; text-align: center; margin: 8px 0;
     }
-    .status-box.active {
-        border-color: #00d4ff;
-        color: #00d4ff;
-    }
+    .status-box.active { border-color: #00d4ff; color: #00d4ff; }
 
-    .disclaimer {
-        font-size: 0.75rem;
-        color: #4b5563;
-        text-align: center;
-        padding: 1rem 0 0.5rem 0;
-        border-top: 1px solid #1f2937;
-        margin-top: 1rem;
-    }
-
-    div[data-testid="stAudioInput"] {
-        background: #111827;
-        border: 2px dashed #1e4d7b;
-        border-radius: 16px;
-        padding: 1rem;
-    }
-    .stTextInput input {
-        background: #111827 !important;
-        color: #e0f0ff !important;
-        border: 1px solid #1e4d7b !important;
-        border-radius: 10px !important;
-    }
-    .stButton button {
-        background: linear-gradient(90deg, #0066ff, #00d4ff) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 10px !important;
-        font-weight: 600 !important;
-        padding: 0.5rem 2rem !important;
-    }
+    div[data-testid="stAudioInput"] { background: #111827; border: 2px dashed #1e4d7b; border-radius: 16px; padding: 1rem; }
+    .stTextInput input { background: #111827 !important; color: #e0f0ff !important; border: 1px solid #1e4d7b !important; border-radius: 10px !important; }
+    .stButton button { background: linear-gradient(90deg, #0066ff, #00d4ff) !important; color: white !important; border: none !important; border-radius: 10px !important; font-weight: 600 !important; }
 </style>
 """, unsafe_allow_html=True)
-
 
 # ── Session state init ────────────────────────────────────────────────────────
 if "agent" not in st.session_state:
     with st.spinner("Loading AI agent..."):
         st.session_state.agent = build_agent()
-
 if "memory" not in st.session_state:
     st.session_state.memory = ConversationMemory()
-
 if "chat_log" not in st.session_state:
     st.session_state.chat_log = []
-
 if "status" not in st.session_state:
     st.session_state.status = "Ready"
-
 if "last_audio_hash" not in st.session_state:
     st.session_state.last_audio_hash = None
 
-
 # ── Header ────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="header-container">
-    <div class="header-title">📈 Finance AI</div>
-    <div class="header-subtitle">VOICE-POWERED INVESTMENT ASSISTANT</div>
-</div>
-""", unsafe_allow_html=True)
-
+st.markdown('<div class="header-container"><div class="header-title">📈 Finance AI</div><div class="header-subtitle">VOICE-POWERED INVESTMENT ASSISTANT</div></div>', unsafe_allow_html=True)
 st.markdown("---")
 
-
+# ── Helper: process a query ───────────────────────────────────────────────────
 # ── Helper: process a query ───────────────────────────────────────────────────
 def process_query(user_text: str):
     if not user_text.strip():
         return
 
-    st.session_state.chat_log.append({"role": "user", "text": user_text})
+    st.session_state.chat_log.append({"role": "user", "ui_text": user_text, "spoken_text": ""})
     st.session_state.status = "Thinking..."
 
     with st.spinner("Analyzing market data..."):
-        response = run_agent(
-            st.session_state.agent,
-            user_text,
-            st.session_state.memory.get_history()
-        )
+        try:
+            raw_response = run_agent(
+                st.session_state.agent,
+                user_text,
+                st.session_state.memory.get_history()
+            )
+        except Exception as e:
+            error_msg = str(e)
+            # Catch the 429 API rate limit error smoothly
+            if "429" in error_msg or "RateLimitError" in error_msg or "quota" in error_msg.lower():
+                raw_response = '{"ui_text": "⚠️ **Rate Limit Reached.** I am receiving too many requests! Please wait about 30 seconds and try again.", "spoken_text": "I am receiving too many requests right now. Please wait about 30 seconds and try again."}'
+            else:
+                raw_response = f'{{"ui_text": "⚠️ **System Error:** {error_msg}", "spoken_text": "I encountered an error connecting to the server. Please check the screen for details."}}'
 
-    st.session_state.memory.add_turn(user_text, response)
+    # ── Smarter JSON Parsing Logic ──
+    # ── Bulletproof XML Parsing Logic ──
+    try:
+        # Look for the UI text and Spoken text between the tags
+        ui_match = re.search(r'<ui_text>(.*?)</ui_text>', raw_response, re.DOTALL | re.IGNORECASE)
+        spoken_match = re.search(r'<spoken_text>(.*?)</spoken_text>', raw_response, re.DOTALL | re.IGNORECASE)
+        
+        if ui_match and spoken_match:
+            ui_display = ui_match.group(1).strip().replace('\\n', '\n')
+            voice_script = spoken_match.group(1).strip()
+        else:
+            # If tags are missing, force the fallback
+            raise ValueError("XML tags missing")
+
+    except Exception:
+        # Fallback: If the AI just writes normal text, show it all on screen
+        ui_display = raw_response
+        
+        # For the voice, grab just the very last paragraph and clean out markdown symbols
+        paragraphs = [p for p in raw_response.split("\n") if p.strip()]
+        if paragraphs:
+            voice_script = paragraphs[-1].replace("*", "").replace("#", "").replace("_", "")
+        else:
+            voice_script = "I have displayed the information on your screen."
+
+    st.session_state.memory.add_turn(user_text, ui_display)
 
     st.session_state.status = "Generating voice response..."
-    
-    # <-- FIX 2: Unique audio filename so history doesn't get overwritten
-    unique_filename = f"response_{int(time.time())}.mp3"
+    unique_filename = f"jio_response_{int(time.time())}.mp3"
     audio_path = os.path.join(tempfile.gettempdir(), unique_filename)
     
-    tts_result = text_to_speech(response, audio_path)
+    # Pass ONLY the clean voice script to TTS
+    tts_result = text_to_speech(voice_script, audio_path)
 
+    # Add `played: False` for the autoplay functionality
     st.session_state.chat_log.append({
         "role": "agent",
-        "text": response,
-        "audio": tts_result if tts_result else None
+        "ui_text": ui_display,
+        "audio": tts_result if tts_result else None,
+        "played": False
     })
 
     st.session_state.status = "Ready"
-
 
 # ── Input section ─────────────────────────────────────────────────────────────
 st.markdown("### 🎙️ Ask a question")
@@ -195,18 +152,17 @@ tab1, tab2 = st.tabs(["Voice Input", "Text Input"])
 
 with tab1:
     st.markdown("Record your question below:")
-    audio_input = st.audio_input("Record", key="audio_recorder", label_visibility="collapsed")
+    # Added "Record your voice" label
+    audio_input = st.audio_input("Record your voice", key="audio_recorder", label_visibility="collapsed")
 
     if audio_input is not None:
         raw_bytes = audio_input.getvalue()
         audio_hash = hash(raw_bytes)
         
-        # <-- FIX 1: Wrap in an if-statement instead of using st.stop()
         if audio_hash != st.session_state.last_audio_hash:
             st.session_state.last_audio_hash = audio_hash
             st.caption(f"Audio captured: {len(raw_bytes):,} bytes")
 
-            # Write raw bytes and let Whisper load directly via ffmpeg
             with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
                 tmp.write(raw_bytes)
                 raw_path = tmp.name
@@ -214,10 +170,8 @@ with tab1:
             with st.spinner("Transcribing your voice..."):
                 transcribed = transcribe_audio(raw_path)
 
-            try:
-                os.unlink(raw_path)
-            except:
-                pass
+            try: os.unlink(raw_path)
+            except: pass
 
             if transcribed:
                 st.success(f'Heard: *"{transcribed}"*')
@@ -227,25 +181,22 @@ with tab1:
             else:
                 st.error("Could not transcribe audio. Please try again.")
 
-
 with tab2:
     col1, col2 = st.columns([4, 1])
-
     with col1:
+        # Added "Type your question" label
         text_input = st.text_input(
-            "",
-            placeholder="e.g. Which IT stocks should I consider?",
-            key="text_query",
+            "Type your question", 
+            placeholder="e.g. Which IT stocks should I consider?", 
+            key="text_query", 
             label_visibility="collapsed"
         )
-
     with col2:
         ask_btn = st.button("Ask", use_container_width=True)
 
     if ask_btn and text_input:
         process_query(text_input)
         st.rerun()
-
 
 # ── Chat history ──────────────────────────────────────────────────────────────
 if st.session_state.chat_log:
@@ -255,33 +206,24 @@ if st.session_state.chat_log:
     for entry in reversed(st.session_state.chat_log):
         if entry["role"] == "user":
             st.markdown('<div class="label-user">YOU</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="chat-bubble-user">{entry["text"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="chat-bubble-user">{entry["ui_text"]}</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="label-agent">FINANCE AI</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="chat-bubble-agent">{entry["text"]}</div>', unsafe_allow_html=True)
+            st.markdown('<div class="label-agent">JIO FINANCE AI</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="chat-bubble-agent">{entry["ui_text"]}</div>', unsafe_allow_html=True)
 
             if entry.get("audio") and os.path.exists(entry["audio"]):
-                st.audio(entry["audio"], format="audio/mp3", autoplay=False)
+                # ── AUTOPLAY LOGIC ──
+                if not entry.get("played", True):
+                    st.audio(entry["audio"], format="audio/mp3", autoplay=True)
+                    entry["played"] = True # Mark it as played so it doesn't auto-play on next refresh
+                else:
+                    st.audio(entry["audio"], format="audio/mp3", autoplay=False)
 
     if st.button("🗑️ Clear Conversation"):
         st.session_state.chat_log = []
         st.session_state.memory.clear()
         st.rerun()
 
-
-
 # ── Status bar ────────────────────────────────────────────────────────────────
 status_class = "active" if st.session_state.status != "Ready" else ""
-st.markdown(
-    f'<div class="status-box {status_class}">⬤ {st.session_state.status}</div>',
-    unsafe_allow_html=True
-)
-
-
-# ── Disclaimer ────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="disclaimer">
-    This tool is for informational and educational purposes only.<br>
-    It does not constitute financial advice. Always consult a certified financial advisor.
-</div>
-""", unsafe_allow_html=True)
+st.markdown(f'<div class="status-box {status_class}">⬤ {st.session_state.status}</div>', unsafe_allow_html=True)
