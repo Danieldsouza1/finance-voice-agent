@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
@@ -13,6 +14,7 @@ from tools.stock_news import get_stock_news
 
 load_dotenv()
 
+# Added 'r' prefix to make this a raw string, fixing the SyntaxWarning for \ fractions
 SYSTEM_PROMPT = r"""You are an AI-powered voice-based financial assistant, designed to provide data-backed investment insights to Indian retail investors.
 
 Your primary goal is to help users explore stock options using real financial data. You are NOT a licensed financial advisor.
@@ -55,24 +57,24 @@ Reliance is showing strong growth with a P E ratio of 28.5. The current price is
 
 
 def build_agent():
-    # Load keys explicitly from environment
+    # Explicitly fetch keys to ensure they are available to the LLM classes
     gemini_key = os.getenv("GEMINI_API_KEY")
     groq_key = os.getenv("GROQ_API_KEY")
 
     # 1. PRIMARY: Gemini 2.5 Flash Lite
     primary_llm = ChatOpenAI(
         model_name="gemini-2.5-flash-lite",
-        api_key=gemini_key, # <--- Ensure this is explicitly passed
+        api_key=gemini_key, # Explicitly passed to fix 'Missing credentials' error
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         temperature=0.3,
-        max_retries=0,
+        max_retries=0,  # Fails fast to trigger fallback
         timeout=20,
     )
 
     # 2. FALLBACK 1: Gemini 1.5 Flash
     fallback_1 = ChatOpenAI(
         model_name="gemini-1.5-flash",
-        api_key=gemini_key, # <--- Ensure this is explicitly passed
+        api_key=gemini_key, # Explicitly passed
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         temperature=0.3,
         max_retries=0,
@@ -82,19 +84,17 @@ def build_agent():
     # 3. FALLBACK 2: Groq LLaMA 3.3
     fallback_2 = ChatGroq(
         model="llama-3.3-70b-versatile",
-        api_key=groq_key, # <--- Ensure this is explicitly passed
+        api_key=groq_key, # Explicitly passed
         temperature=0.3,
         max_retries=1,
         timeout=20,
     )
 
-
-    # Combine them using LangChain's native fallback feature
+    # Combine models into a robust cascading chain
     robust_llm = primary_llm.with_fallbacks([fallback_1, fallback_2])
 
     tools = [get_stock_price, get_stock_fundamentals, get_stock_news]
 
-    # Pass the combined 'robust_llm' to the agent
     agent = create_react_agent(
         model=robust_llm,
         tools=tools,
@@ -103,20 +103,12 @@ def build_agent():
 
     return agent
 
-
 def run_agent(agent, user_input: str, chat_history: list) -> str:
-    """
-    Runs the agent with the given input and chat history.
-    Returns the final text response.
-    """
     messages = chat_history + [HumanMessage(content=user_input)]
-
     result = agent.invoke({"messages": messages})
 
-    # Extract the last AI message as the response
     for msg in reversed(result["messages"]):
         if isinstance(msg, AIMessage) and msg.content:
             return msg.content
 
-    # Fallback JSON just in case it fails completely
-    return '{"ui_text": "I was unable to generate a response. Please try again.", "spoken_text": "I was unable to generate a response. Please try again."}'
+    return "<ui_text>Error generating response.</ui_text><spoken_text>Sorry, I encountered an error.</spoken_text>"
