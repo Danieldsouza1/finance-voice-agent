@@ -101,11 +101,12 @@ def process_query(user_text: str):
             )
         except Exception as e:
             error_msg = str(e)
-            # Catch the 429 API rate limit error smoothly
             if "429" in error_msg or "RateLimitError" in error_msg or "quota" in error_msg.lower():
-                raw_response = '{"ui_text": "⚠️ **Rate Limit Reached.** I am receiving too many requests! Please wait about 30 seconds and try again.", "spoken_text": "I am receiving too many requests right now. Please wait about 30 seconds and try again."}'
+                raw_response = '<ui_text>⚠️ **Rate Limit Reached.** Please wait 30 seconds and try again.</ui_text><spoken_text>I am receiving too many requests. Please wait 30 seconds and try again.</spoken_text>'
+            elif "tool_use_failed" in error_msg or "Failed to call a function" in error_msg:
+                raw_response = '<ui_text>⚠️ **Temporary Error.** The AI had trouble calling the data tool. Please try asking your question again.</ui_text><spoken_text>I had a temporary issue fetching the data. Please ask your question again.</spoken_text>'
             else:
-                raw_response = f'{{"ui_text": "⚠️ **System Error:** {error_msg}", "spoken_text": "I encountered an error connecting to the server. Please check the screen for details."}}'
+                raw_response = f'<ui_text>⚠️ **System Error:** {error_msg}</ui_text><spoken_text>I encountered an error. Please try again.</spoken_text>'
 
     # ── Bulletproof XML Parsing Logic ──
     # ── Bulletproof XML Parsing Logic ──

@@ -44,26 +44,25 @@ def build_agent():
     groq_key = os.getenv("GROQ_API_KEY")
     gemini_key = os.getenv("GEMINI_API_KEY")
 
-    # 1. PRIMARY: Groq (Llama 3.3) - High RPM limit, incredibly fast
+    # Primary: smaller model, more reliable tool calling, higher RPM
     primary_llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         api_key=groq_key,
-        temperature=0.3,
-        max_retries=0, # Fails fast if exhausted to trigger Gemini fallback
-        timeout=20,
-    )
-
-    # 2. FALLBACK 1: Gemini 2.5 Flash Lite
-    fallback_1 = ChatOpenAI(
-        model_name="gemini-2.5-flash-lite",
-        api_key=gemini_key,
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         temperature=0.3,
         max_retries=0,
         timeout=20,
     )
 
-    # 3. FALLBACK 2: Gemini 1.5 Flash - The ultimate safety net
+    # Fallback 1: larger Groq model
+    fallback_1 = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        api_key=groq_key,
+        temperature=0.3,
+        max_retries=0,
+        timeout=25,
+    )
+
+    # Fallback 2: Gemini
     fallback_2 = ChatOpenAI(
         model_name="gemini-1.5-flash",
         api_key=gemini_key,
@@ -73,7 +72,6 @@ def build_agent():
         timeout=20,
     )
 
-    # Chain the three models together
     robust_llm = primary_llm.with_fallbacks([fallback_1, fallback_2])
     tools = [get_stock_price, get_stock_fundamentals, get_stock_news]
 
