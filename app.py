@@ -74,6 +74,8 @@ if "memory_data" not in st.session_state:
     st.session_state.memory_data = []
 if "pending_transcription" not in st.session_state:
     st.session_state.pending_transcription = None
+if "audio_key" not in st.session_state:
+    st.session_state.audio_key = 0
 
 # Rebuild memory object from serialized data each run
 memory = ConversationMemory.from_dict(st.session_state.memory_data)
@@ -164,7 +166,7 @@ tab1, tab2 = st.tabs(["Voice Input", "Text Input"])
 
 with tab1:
     st.markdown("Record your question below:")
-    audio_input = st.audio_input("Record your voice", key="audio_recorder", label_visibility="collapsed")
+    audio_input = st.audio_input("Record your voice", key=f"audio_recorder_{st.session_state.audio_key}", label_visibility="collapsed")
 
     if audio_input is not None:
         raw_bytes = audio_input.getvalue()
@@ -187,6 +189,7 @@ with tab1:
             if transcribed:
                 # Store transcription in session state, don't process yet
                 st.session_state.pending_transcription = transcribed
+                st.session_state.audio_key += 1
                 st.rerun()
             else:
                 st.error("Could not transcribe audio. Please try again.")
