@@ -15,16 +15,18 @@ def get_client():
 
 
 def clean_text_for_tts(text: str) -> str:
-    """
-    Cleans LLM output so it sounds natural when spoken aloud.
-    """
     text = re.sub(r'\*+', '', text)
     text = re.sub(r'#+\s?', '', text)
     text = re.sub(r'`+', '', text)
     text = re.sub(r'-{2,}', '', text)
+    text = re.sub(r'\|', ' ', text)
+    text = re.sub(r'\[.*?\]\(.*?\)', '', text)
+    # Fix: add space before dollar amounts instead of just removing $
+    text = re.sub(r'\$(\d)', r' \1 dollars ', text)
     text = text.replace('₹', ' rupees ')
-    text = text.replace('$', ' dollars ')
     text = re.sub(r'(\d+\.?\d*)\s*%', r'\1 percent', text)
+    # Fix collapsed words — add space before capital letters after lowercase
+    text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 

@@ -1,11 +1,9 @@
 import os
-import json
 import re
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.prebuilt import create_react_agent
 
 from tools.stock_price import get_stock_price
@@ -14,85 +12,69 @@ from tools.stock_news import get_stock_news
 
 load_dotenv()
 
-# Added 'r' prefix to make this a raw string, fixing the SyntaxWarning for \ fractions
-SYSTEM_PROMPT = r"""You are an AI-powered voice-based financial assistant, designed to provide data-backed investment insights to Indian retail investors.
+SYSTEM_PROMPT = r"""You are an AI-powered voice-based financial assistant designed to provide data-backed investment insights to Indian retail investors. You are NOT a licensed financial advisor.
 
-Your primary goal is to help users explore stock options using real financial data. You are NOT a licensed financial advisor.
+TOOL SELECTION RULES:
+- User asks for NEWS/UPDATES → call get_stock_news ONLY
+- User asks for PRICE → call get_stock_price ONLY
+- User asks for FUNDAMENTALS/PE/EPS → call get_stock_fundamentals ONLY
+- User asks for ANALYSIS or SHOULD I INVEST → call ALL THREE tools
+- User asks to COMPARE → call tools for EACH stock explicitly.
+- User asks for SECTOR OVERVIEW (e.g., "banking sector") → identify 2-3 key Indian stocks from that sector, call get_stock_price and get_stock_fundamentals for EACH, and provide a comparative overview.
 
 STRICT RULES:
-1. Never say "buy" or "sell" as a direct instruction. Always frame stocks as "options to consider" or "worth exploring".
-2. Always base your response on real-time data fetched by your tools.
-3. ALWAYS call get_stock_price for EACH stock requested before responding.
-4. If a tool returns no data or an error, clearly say so rather than guessing.
+1. Always base your response on real-time data fetched by your tools. Do not hallucinate data.
+2. Match the spoken_text content to what was actually asked.
+3. PHONETIC FORGIVENESS: User input comes from Speech-to-Text and may contain mishearings. If a name seems phonetically close to a known stock, resolve it silently and fetch data for the correct stock. 
+4. NO PLAIN TEXT RESPONSES: Even if a tool returns an error or data is unavailable (e.g., if Zomato data is missing), you MUST wrap your error message in the exact XML tags required below. Never break format.
 
 CRITICAL OUTPUT FORMAT:
-Your Final Answer MUST use exact XML tags to separate the screen text from the voice text. Do NOT use JSON.
+Your Final Answer MUST ALWAYS use exact XML tags. Do NOT use plain text or JSON.
 
 <ui_text>
-A detailed, rich Markdown response for the screen. You MUST use tables, bullet points, and LaTeX formatting (using $ and $$) for any financial math or formulas. You MUST use actual line breaks (Enter key) so the Markdown table renders correctly. Always include a disclaimer at the bottom.
+A detailed Markdown response for the screen. Use tables and bullet points. Always include a disclaimer at the bottom.
 </ui_text>
 
 <spoken_text>
-A short, conversational summary (under 50 words) with NO special characters, markdown, or tables. Read currency out naturally, explicitly using "rupees" and "paise" for decimals (e.g., instead of 2427.3, write "2427 rupees and 30 paise"). This is what the voice will speak aloud.
+A natural conversational response of 60 to 80 words. Must directly answer what the user asked using the actual data fetched. End with one short disclaimer sentence.
 </spoken_text>
-
-Example Output:
-<ui_text>
-### Reliance Industries Analysis
-
-| Metric | Value |
-|---|---|
-| P/E | 28.5 |
-| EPS | ₹59.69 |
-
-The Price-to-Earnings ratio is calculated using this formula:
-$$P/E = \frac{Current\ Stock\ Price}{Earnings\ Per\ Share}$$
-
-*Disclaimer: This is not financial advice.*
-</ui_text>
-
-<spoken_text>
-Reliance is showing strong growth with a P E ratio of 28.5. The current price is 1463 rupees and 60 paise. The fundamentals look solid. This is for educational purposes only.
-</spoken_text>"""
-
+"""
 
 def build_agent():
-    # Explicitly fetch keys to ensure they are available to the LLM classes
-    gemini_key = os.getenv("GEMINI_API_KEY")
     groq_key = os.getenv("GROQ_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
 
-    # 1. PRIMARY: Gemini 2.5 Flash Lite
-    primary_llm = ChatOpenAI(
-        model_name="gemini-2.5-flash-lite",
-        api_key=gemini_key, # Explicitly passed to fix 'Missing credentials' error
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    # 1. PRIMARY: Groq (Llama 3.3) - High RPM limit, incredibly fast
+    primary_llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        api_key=groq_key,
         temperature=0.3,
-        max_retries=0,  # Fails fast to trigger fallback
+        max_retries=0, # Fails fast if exhausted to trigger Gemini fallback
         timeout=20,
     )
 
-    # 2. FALLBACK 1: Gemini 1.5 Flash
+    # 2. FALLBACK 1: Gemini 2.5 Flash Lite
     fallback_1 = ChatOpenAI(
-        model_name="gemini-1.5-flash",
-        api_key=gemini_key, # Explicitly passed
+        model_name="gemini-2.5-flash-lite",
+        api_key=gemini_key,
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         temperature=0.3,
         max_retries=0,
         timeout=20,
     )
 
-    # 3. FALLBACK 2: Groq LLaMA 3.3
-    fallback_2 = ChatGroq(
-        model="llama-3.3-70b-versatile",
-        api_key=groq_key, # Explicitly passed
+    # 3. FALLBACK 2: Gemini 1.5 Flash - The ultimate safety net
+    fallback_2 = ChatOpenAI(
+        model_name="gemini-1.5-flash",
+        api_key=gemini_key,
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         temperature=0.3,
-        max_retries=1,
+        max_retries=0,
         timeout=20,
     )
 
-    # Combine models into a robust cascading chain
+    # Chain the three models together
     robust_llm = primary_llm.with_fallbacks([fallback_1, fallback_2])
-
     tools = [get_stock_price, get_stock_fundamentals, get_stock_news]
 
     agent = create_react_agent(
@@ -111,4 +93,4 @@ def run_agent(agent, user_input: str, chat_history: list) -> str:
         if isinstance(msg, AIMessage) and msg.content:
             return msg.content
 
-    return "<ui_text>Error generating response.</ui_text><spoken_text>Sorry, I encountered an error.</spoken_text>"
+    return "<ui_text>Error generating response. Please try asking again.</ui_text><spoken_text>Sorry, I encountered an error generating my response.</spoken_text>"

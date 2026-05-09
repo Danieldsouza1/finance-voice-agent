@@ -64,20 +64,24 @@ st.markdown("""
 if "agent" not in st.session_state:
     with st.spinner("Loading AI agent..."):
         st.session_state.agent = build_agent()
-if "memory" not in st.session_state:
-    st.session_state.memory = ConversationMemory()
 if "chat_log" not in st.session_state:
     st.session_state.chat_log = []
 if "status" not in st.session_state:
     st.session_state.status = "Ready"
 if "last_audio_hash" not in st.session_state:
     st.session_state.last_audio_hash = None
+if "memory_data" not in st.session_state:
+    st.session_state.memory_data = []
+if "pending_transcription" not in st.session_state:
+    st.session_state.pending_transcription = None
+
+# Rebuild memory object from serialized data each run
+memory = ConversationMemory.from_dict(st.session_state.memory_data)
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown('<div class="header-container"><div class="header-title">📈 Finance AI</div><div class="header-subtitle">VOICE-POWERED INVESTMENT ASSISTANT</div></div>', unsafe_allow_html=True)
 st.markdown("---")
 
-# ── Helper: process a query ───────────────────────────────────────────────────
 # ── Helper: process a query ───────────────────────────────────────────────────
 def process_query(user_text: str):
     if not user_text.strip():
@@ -91,7 +95,7 @@ def process_query(user_text: str):
             raw_response = run_agent(
                 st.session_state.agent,
                 user_text,
-                st.session_state.memory.get_history()
+                memory.get_history()  # CORRECT — uses local rebuilt object
             )
         except Exception as e:
             error_msg = str(e)
@@ -101,7 +105,7 @@ def process_query(user_text: str):
             else:
                 raw_response = f'{{"ui_text": "⚠️ **System Error:** {error_msg}", "spoken_text": "I encountered an error connecting to the server. Please check the screen for details."}}'
 
-    # ── Smarter JSON Parsing Logic ──
+    # ── Bulletproof XML Parsing Logic ──
     # ── Bulletproof XML Parsing Logic ──
     try:
         # Look for the UI text and Spoken text between the tags
@@ -126,7 +130,15 @@ def process_query(user_text: str):
         else:
             voice_script = "I have displayed the information on your screen."
 
-    st.session_state.memory.add_turn(user_text, ui_display)
+    # --- SAFETY CHECK: If Voice Script is too short (e.g., just the disclaimer) ---
+    if len(voice_script.strip()) < 20:
+        clean = re.sub(r'[#*|`\[\]()]', '', ui_display)
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        voice_script = clean[:400] 
+
+    # --- MEMORY FIX: Save raw_response so the AI remembers to use XML tags ---
+    memory.add_turn(user_text, raw_response)
+    st.session_state.memory_data = memory.to_dict()
 
     st.session_state.status = "Generating voice response..."
     unique_filename = f"jio_response_{int(time.time())}.mp3"
@@ -152,7 +164,6 @@ tab1, tab2 = st.tabs(["Voice Input", "Text Input"])
 
 with tab1:
     st.markdown("Record your question below:")
-    # Added "Record your voice" label
     audio_input = st.audio_input("Record your voice", key="audio_recorder", label_visibility="collapsed")
 
     if audio_input is not None:
@@ -174,17 +185,32 @@ with tab1:
             except: pass
 
             if transcribed:
-                st.success(f'Heard: *"{transcribed}"*')
-                with st.spinner("Getting response..."):
-                    process_query(transcribed)
+                # Store transcription in session state, don't process yet
+                st.session_state.pending_transcription = transcribed
                 st.rerun()
             else:
                 st.error("Could not transcribe audio. Please try again.")
 
+    # Show confirmation UI if there's a pending transcription
+    if st.session_state.get("pending_transcription"):
+        transcribed = st.session_state.pending_transcription
+        st.info(f'🎤 Heard: **"{transcribed}"**')
+        
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            if st.button("✅ Yes, that's correct", use_container_width=True):
+                st.session_state.pending_transcription = None
+                with st.spinner("Getting response..."):
+                    process_query(transcribed)
+                st.rerun()
+        with col_b:
+            if st.button("❌ No, let me retype", use_container_width=True):
+                st.session_state.pending_transcription = None
+                st.rerun()
+
 with tab2:
     col1, col2 = st.columns([4, 1])
     with col1:
-        # Added "Type your question" label
         text_input = st.text_input(
             "Type your question", 
             placeholder="e.g. Which IT stocks should I consider?", 
@@ -208,20 +234,21 @@ if st.session_state.chat_log:
             st.markdown('<div class="label-user">YOU</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="chat-bubble-user">{entry["ui_text"]}</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="label-agent">JIO FINANCE AI</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="chat-bubble-agent">{entry["ui_text"]}</div>', unsafe_allow_html=True)
+            st.markdown('<div class="label-agent">FINANCE AI</div>', unsafe_allow_html=True)
+            # Use st.markdown directly so tables and formatting render properly
+            with st.container():
+                st.markdown(entry["ui_text"])
 
             if entry.get("audio") and os.path.exists(entry["audio"]):
-                # ── AUTOPLAY LOGIC ──
                 if not entry.get("played", True):
                     st.audio(entry["audio"], format="audio/mp3", autoplay=True)
-                    entry["played"] = True # Mark it as played so it doesn't auto-play on next refresh
+                    entry["played"] = True
                 else:
                     st.audio(entry["audio"], format="audio/mp3", autoplay=False)
 
     if st.button("🗑️ Clear Conversation"):
         st.session_state.chat_log = []
-        st.session_state.memory.clear()
+        st.session_state.memory_data = []  # CORRECT — clears the serialized memory
         st.rerun()
 
 # ── Status bar ────────────────────────────────────────────────────────────────

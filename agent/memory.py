@@ -2,20 +2,32 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 class ConversationMemory:
     def __init__(self, max_turns: int = 4):
-        # max_turns = how many back-and-forth exchanges to remember
         self.max_turns = max_turns
-        self.history = []
+        # Store as plain dicts for session state serialization safety
+        self._raw = []
 
     def add_turn(self, human: str, ai: str):
-        self.history.append(HumanMessage(content=human))
-        self.history.append(AIMessage(content=ai))
-        # Keep only last N turns to avoid context bloat
-        max_messages = self.max_turns * 2
-        if len(self.history) > max_messages:
-            self.history = self.history[-max_messages:]
+        self._raw.append({"human": human, "ai": ai})
+        if len(self._raw) > self.max_turns:
+            self._raw = self._raw[-self.max_turns:]
 
     def get_history(self):
-        return self.history
+        history = []
+        for turn in self._raw:
+            history.append(HumanMessage(content=turn["human"]))
+            history.append(AIMessage(content=turn["ai"]))
+        return history
 
     def clear(self):
-        self.history = []
+        self._raw = []
+
+    def to_dict(self) -> list:
+        """Serialize for session state storage."""
+        return self._raw.copy()
+
+    @classmethod
+    def from_dict(cls, data: list, max_turns: int = 4) -> "ConversationMemory":
+        """Restore from session state storage."""
+        mem = cls(max_turns=max_turns)
+        mem._raw = data
+        return mem
